@@ -1,0 +1,7 @@
+databases:
+  - name: production
+    dsn: mysql://admin:securepassword@prod.database.com:3306/prod_db
+  - name: staging
+    dsn: mysql://stage_user:anotherpassword@stage.database.com:3306/stage_db
+  - name: development
+    dsn: mysql://dev_user:devpassword@localhost:3306/dev_db

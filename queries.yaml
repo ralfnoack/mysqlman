@@ -1,0 +1,10 @@
+queries:
+  - name: get_all_users
+    query: "SELECT * FROM users;"
+    description: "Fetch all users from the users table."
+  - name: count_orders
+    query: "SELECT COUNT(*) FROM orders;"
+    description: "Count the number of orders in the orders table."
+  - name: active_sessions
+    query: "SELECT * FROM sessions WHERE status = 'active';"
+    description: "Get all active sessions."
