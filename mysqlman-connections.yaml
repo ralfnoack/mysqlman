@@ -3,5 +3,8 @@ databases:
     dsn: mysql://admin:securepassword@prod.database.com:3306/prod_db
   - name: staging
     dsn: mysql://stage_user:anotherpassword@stage.database.com:3306/stage_db
-  - name: development
-    dsn: mysql://dev_user:devpassword@localhost:3306/dev_db
+  - name: development_1
+    dsn: mysql://root@localhost:3306/
+  - name: development_2
+    dsn: mysql://root@localhost:3306/
+    

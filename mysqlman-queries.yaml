@@ -1,0 +1,5 @@
+queries:
+  - name: default
+    query: "SHOW DATABASES;"
+    description: "List available databases."
+
