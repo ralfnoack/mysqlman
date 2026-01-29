@@ -1,36 +1,17 @@
 #!/bin/bash
 
-# Check for mariadb or mysql client dependency
-if command -v mariadb.exe >/dev/null 2>&1; then
-  MYSQL_EXEC="mariadb.exe"
-elif command -v mysql.exe >/dev/null 2>&1; then
-  MYSQL_EXEC="mysql.exe"
-elif command -v mariadb >/dev/null 2>&1; then
-  MYSQL_EXEC="mariadb"
-elif command -v mysql >/dev/null 2>&1; then
-  MYSQL_EXEC="mysql"
-else
-  echo -e "\033[31mERROR:\033[0m Neither mariadb nor mysql client is installed or in \$PATH." >&2
-  echo "Please install mariadb-client or mysql-client and ensure it is in your PATH." >&2
-  exit 1
-fi
-# Check for yq dependency
-if command -v yq.exe >/dev/null 2>&1; then
-  YQ_EXEC="yq.exe"
-elif command -v yq >/dev/null 2>&1; then
-  YQ_EXEC="yq"
-else
-  echo -e "\033[31mERROR:\033[0m yq is not installed or in \$PATH." >&2
-  echo "Please install yq and ensure it is in your PATH." >&2
-  exit 1
-fi
+# Source all function files from src
+for f in "$(dirname "$0")/src"/*.sh; do
+  [ -e "$f" ] && source "$f"
+done
+
+check_deps
 
 # MySQL/MariaDB CLI Tool: YAML config + DSN + filter + dry-run support
 # Dependencies: yq (https://github.com/mikefarah/yq), mariadb or mysql client
 
 CONFIG_FILE="mysqlman-connections.yaml"
 LOG_FILE="mysqlman.log"
-mkdir -p logs
 
 # Parse global flags for config and log file override
 while [[ "$1" =~ ^--(config|log)$ ]]; do
@@ -61,137 +42,6 @@ Examples:
   mysqlman.sh query --query-file q.sql --db prod --db dev --dry-run
 
 EOF
-}
-
-# Extract DSN details under key (field)
-
-get_dsn_val() {
-  local dsn="$1"
-  local key="$2"
-  case "$key" in
-    user) echo "$dsn" | sed -nE 's|mysql://([^:@/]+)(:[^@]*)?@.*|\1|p' ;;
-    password) echo "$dsn" | sed -nE 's|mysql://[^:/@]+:([^@]*)@.*|\1|p' ;;
-    host) echo "$dsn" | sed -nE 's|mysql://[^@]+@([^:/@]+)(:[0-9]+)?/.*|\1|p' ;;
-    port) echo "$dsn" | sed -nE 's|mysql://[^@]+@[^:/@]+:([0-9]+).*|\1|p' ;;
-    database) echo "$dsn" | sed -nE 's|mysql://[^@]+@[^:/@]+(:[0-9]+)?/([^/?&#]*)?.*|\2|p' ;;
-    *) echo ;; # not supported
-  esac
-}
-
-# Gibt alle Dot-Notation-Schlüssel und DSN-Werte als Zeilen "key = dsn" aus
-db_keyval_list() {
-  "$YQ_EXEC" '.databases' -op "$CONFIG_FILE"
-}
-
-# Listet alle Verbindungen, optional gefiltert nach Dot-Notation-Präfix
-list_dbs() {
-  local filter="$1"
-  local idx=1
-  printf "%-3s | %-30s | %-16s | %-25s | %-6s | %-20s\n" "ID" "Key" "User" "Host" "Port" "Database"
-  printf "%s\n" "-------------------------------------------------------------------------------------------------------------"
-  db_keyval_list | while IFS='=' read -r key dsn; do
-    key="${key// /}" # Leerzeichen entfernen
-    dsn="${dsn## }"  # führende Leerzeichen entfernen
-    user=$(get_dsn_val "$dsn" "user")
-    host=$(get_dsn_val "$dsn" "host")
-    port=$(get_dsn_val "$dsn" "port")
-    db=$(get_dsn_val "$dsn" "database")
-    user=${user:-"-"}
-    host=${host:-"-"}
-    port=${port:-"3306"}
-    db=${db:-"-"}
-    match=1
-    if [[ -n "$filter" ]]; then
-      [[ "$key" == $filter* ]] || match=0
-    fi
-    if [[ "$match" -eq 1 ]]; then
-      printf "%-3s | %-30s | %-16s | %-25s | %-6s | %-20s\n" "$idx" "$key" "$user" "$host" "$port" "$db"
-      idx=$((idx + 1))
-    fi
-  done
-}
-
-# Gibt alle passenden key/dsn-Zeilen für --db oder --filter zurück
-get_target_dbs() {
-  local -n dbnames_arr_ref="$1"
-  local filter="$2"
-  if [[ ${#dbnames_arr_ref[@]} -gt 0 ]]; then
-    for dbn in "${dbnames_arr_ref[@]}"; do
-      db_keyval_list | while IFS='=' read -r key dsn; do
-        key="${key// /}"
-        dsn="${dsn## }"
-        if [[ "$key" == "$dbn" ]]; then
-          echo "$key = $dsn"
-        fi
-      done
-    done
-  elif [[ -n "$filter" ]]; then
-    db_keyval_list | while IFS='=' read -r key dsn; do
-      key="${key// /}"
-      dsn="${dsn## }"
-      [[ "$key" == $filter* ]] && echo "$key = $dsn"
-    done
-  else
-    db_keyval_list
-  fi
-}
-
-# Query-Durchführung angepasst auf key = dsn-Zeilen
-query_dbs() {
-  local sql="$1"
-  local dbnames_arr_ref="$2"
-  local filter="$3"
-  local dryrun="$4"
-  local maskflag="$5"
-  local debug="$6"
-  local targets
-  targets=$(get_target_dbs "$dbnames_arr_ref" "$filter")
-  if [[ -z "$targets" ]]; then
-    echo "No matching databases found."
-    exit 2
-  fi
-  if [[ "$dryrun" == 1 ]]; then
-    local mask_pw=1
-    [[ "$5" == "--unmasked" ]] && mask_pw=0
-    echo "[DRY RUN] Would execute query on the following databases:"
-    echo "$targets"
-    echo "$targets" | while IFS='=' read -r key dsn; do
-      key="${key// /}"
-      dsn="${dsn## }"
-      user=$(get_dsn_val "$dsn" "user")
-      host=$(get_dsn_val "$dsn" "host")
-      port=$(get_dsn_val "$dsn" "port")
-      db=$(get_dsn_val "$dsn" "database")
-      if [[ $mask_pw -eq 1 ]]; then
-        dsn_masked=$(echo "$dsn" | sed -E 's|(mysql://[^:]+:)[^@]+(@.*)|\1*****\2|')
-        echo "- $key: $dsn_masked"
-      else
-        echo "- $key: $dsn"
-      fi
-      if [[ "$debug" == 1 ]]; then
-        cmd="$MYSQL_EXEC -h $host -P ${port:-3306} -u $user -p***** $db -e \"$sql\" --ssl-verify-server-cert=off"
-        echo "[DEBUG] Would run: $cmd"
-      fi
-    done
-    echo -e "\nQuery to run:"
-    echo "$sql"
-    return 0
-  fi
-  echo "$targets" | while IFS='=' read -r key dsn; do
-    key="${key// /}"
-    dsn="${dsn## }"
-    user=$(get_dsn_val "$dsn" "user")
-    host=$(get_dsn_val "$dsn" "host")
-    port=$(get_dsn_val "$dsn" "port")
-    db=$(get_dsn_val "$dsn" "database")
-    echo "========= $key ========="
-    if [[ "$debug" == 1 ]]; then
-      cmd="$MYSQL_EXEC -h $host -P ${port:-3306} -u $user -p***** $db -e \"$sql\" --ssl-verify-server-cert=off"
-      echo "[DEBUG] Running: $cmd"
-    fi
-    "$MYSQL_EXEC" -h "$host" -P "${port:-3306}" -u "$user" -p"$(get_dsn_val "$dsn" "password")" "$db" -e "$sql" --ssl-verify-server-cert=off 2>&1 | tee -a "$LOG_FILE"
-    echo
-  done
 }
 
 # Main
@@ -253,7 +103,7 @@ case "$1" in
       fi
       sql=$("$YQ_EXEC" ".queries[] | select(.name == \"$queryname\") | .query" mysqlman-queries.yaml)
       # Remove surrounding single/double quotes (if any) and trim whitespace
-      sql="$(echo "$sql" | sed -E 's/^\s*["'\'']?([^"'\''].*[^"'\''])["'\'']?\s*$/\1/' | sed 's/^ *//;s/ *$//')"
+      sql="$(echo "$sql" | sed -E 's/^\s*["'\'']?([^"'\''].*[^"'\'']+)["'\'']?\s*$/\1/' | sed 's/^ *//;s/ *$//')"
       if [[ -z "$sql" || "$sql" == "null" ]]; then
         echo "Error: Query named '$queryname' not found in mysqlman-queries.yaml."; exit 1;
       fi
